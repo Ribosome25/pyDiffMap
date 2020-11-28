@@ -103,7 +103,11 @@ class DiffusionMap(object):
         return dmap
 
     def _build_kernel(self, X, my_kernel):
-        my_kernel.fit(X)
+        my_kernel.fit(X)  # Kernel has a method fit(). Not fitting the data.
+        if my_kernel.kernel_fxn=='precomputed':
+            # "precomputed" option: skip computing kernel.
+            kernel_matrix = sps.csr_matrix(X,dtype=np.float64)
+            return kernel_matrix, my_kernel
         kernel_matrix = utils._symmetrize_matrix(my_kernel.compute())
         return kernel_matrix, my_kernel
 
@@ -222,6 +226,19 @@ class DiffusionMap(object):
         self.dmap = dmap
         return self
 
+    def fit_transform_from_precomputed_kernel(self,kernel_matrix):
+        """
+        """
+        assert(self.local_kernel.kernel_fxn.lower()=='precomputed')
+        
+        self.construct_Lmat(kernel_matrix)
+        
+        dmap, evecs, evals = self._make_diffusion_coords(self.L)
+        self.evals = evals
+        self.evecs = evecs
+        self.dmap = dmap
+        return self.dmap           
+
     def transform(self, Y):
         """
         Performs Nystroem out-of-sample extension to calculate the values of the diffusion coordinates at each given point.
@@ -264,6 +281,9 @@ class DiffusionMap(object):
         phi : numpy array, shape (n_query, n_eigenvectors)
             Transformed value of the given values.
         """
+        if (self.local_kernel.kernel_fxn=='precomputed'):
+            return self.fit_transform_from_precomputed_kernel(X)
+
         self.fit(X)
         return self.dmap
 

@@ -127,6 +127,7 @@ class Kernel(object):
         self.bandwidth_fxn = self.build_bandwidth_fxn(self.bandwidth_type)
         self.bandwidths = self._compute_bandwidths(X)
         self.scaled_dists = self._get_scaled_distance_mat(self.data, self.bandwidths)
+        #> this is a sps csr distance matrix. Symmetric, diags=0.
         self.choose_optimal_epsilon()
         return self
 
@@ -148,19 +149,23 @@ class Kernel(object):
         y_bandwidths : array-like, shape (n_query_y)
             Bandwidth evaluated at each point Y.  Only returned if return_bandwidths is True.
 
+        *** > Note: This K, self.scaled_dist part is pretty confusing, some are memory reference, some are values.
+           Want to preserve the scaled_dist. Should make some change to copy.***
         """
         if Y is None:
             Y = self.data
         # if np.array_equal(Y, self.data):  # Avoid recomputing nearest neighbors unless needed.
         if _check_equal(Y, self.data):
             y_bandwidths = self.bandwidths
-            K = self.scaled_dists
+            Dist = self.scaled_dists # if precomputed, <ker>.data = X = distance matrix
         else:
             # perform k nearest neighbour search on X and Y and construct sparse matrix
             # retrieve all nonzero elements and apply kernel function to it
             y_bandwidths = self._compute_bandwidths(Y)
-            K = self._get_scaled_distance_mat(Y, y_bandwidths=y_bandwidths)
-        K.data = self.kernel_fxn(K.data, self.epsilon_fitted)
+            Dist = self._get_scaled_distance_mat(Y, y_bandwidths=y_bandwidths)
+        #> So far the K is a distance matrix, symm and diag=0.
+        K = Dist.copy()
+        K.data = self.kernel_fxn(Dist.data, self.epsilon_fitted)
         if return_bandwidths:
             return K, y_bandwidths
         else:
@@ -169,6 +174,21 @@ class Kernel(object):
     def _get_scaled_distance_mat(self, Y, y_bandwidths=None):
         # Scales distance matrix by (rho(x) rho(y))^1/2, where rho is the
         # bandwidth.
+        """
+        meigh.kneighbors_graph(X), Computes the (weighted) graph of k-Neighbors for points in X
+        (can we consider this as the distances of NNs only. A cut-off distance.??)
+        X (n_query, n_indexed) if metric == ‘precomputed’
+        
+        """
+#        if self.metric=='precomputed':
+#            print("kernel._get_scaled_distance_mat()","called")
+#            knn_mapping = self.neigh.kneighbors_graph(Y, mode='distance')# this is sps matr
+#            Y_sps = sps.csr_matrix(Y)
+#            dists = utils._symmetrize_matrix(Y_sps.multiply(knn_mapping))
+#            dists = self.neigh.kneighbors_graph(Y, mode='distance')# this is sps matr
+#        else:
+#            dists = self.neigh.kneighbors_graph(Y, mode='distance')
+#            print("kernel._get_scaled_distance_mat()",type(dists))
         dists = self.neigh.kneighbors_graph(Y, mode='distance')
         if y_bandwidths is not None:
             bw_x = np.power(self.bandwidths, 0.5)
@@ -357,6 +377,11 @@ def _parse_kernel_type(kernel_type):
         def gaussian_kfxn(d, epsilon):
             return np.exp(-d**2 / (4. * epsilon))
         return gaussian_kfxn
+    elif kernel_type.lower() == 'precomputed':
+        # let self.kernel_fxn be a str. 
+        # This will be used in an assertion in dfmap.fit_transform_from_precomputed()
+        # the Kernel.compute() is bypassed if kernel_type == 'precomputed'
+        return 'precomputed'
     elif callable(kernel_type):
         return kernel_type
     else:
